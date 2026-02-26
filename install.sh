@@ -82,6 +82,8 @@ cp etc/daemon.json /etc/docker/
 echo -e "\t\t* Reiniciando o Docker para aplicar as configurações."
 systemctl restart docker
 
+echo -e "\t - Adicionando repositório PPA do GNS3"
+sudo add-apt-repository -y ppa:gns3/ppa
 
 echo -e "3. Configurando e instalando o GNS3:"
 
