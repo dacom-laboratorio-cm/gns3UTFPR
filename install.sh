@@ -29,6 +29,57 @@ verifyFile () {
     fi
 }
 
+# Verifica se um pacote existe nos repositórios APT configurados
+aptPackageExists() {
+    apt-cache show "$1" > /dev/null 2>&1
+}
+
+# Garante que um grupo exista
+ensureGroup() {
+    if ! getent group "$1" > /dev/null; then
+        echo -e "\t\t\t+ Grupo '$1' não existe. Criando."
+        groupadd --system "$1"
+    fi
+}
+
+# Adiciona o PPA do GNS3 com fallback para ambientes onde o add-apt-repository do Mint falha
+addGNS3Repository() {
+    local ubuntuCodename
+    ubuntuCodename=$(awk -F= '/^UBUNTU_CODENAME=/{print $2}' /etc/os-release | tr -d '"')
+
+    if [ -z "$ubuntuCodename" ]; then
+        ubuntuCodename=$(awk -F= '/^VERSION_CODENAME=/{print $2}' /etc/os-release | tr -d '"')
+    fi
+
+    if [ -z "$ubuntuCodename" ]; then
+        echo -e "\n\tERRO - Não foi possível detectar o codename base Ubuntu (UBUNTU_CODENAME/VERSION_CODENAME)."
+        return 1
+    fi
+
+    if add-apt-repository -y ppa:gns3/ppa; then
+        return 0
+    fi
+
+    echo -e "\t\t+ add-apt-repository falhou. Aplicando fallback manual para o PPA do GNS3 (${ubuntuCodename})."
+
+    local launchpadApi="https://launchpad.net/api/1.0/~gns3/+archive/ubuntu/ppa"
+    local fingerprint
+    fingerprint=$(curl -fsSL "$launchpadApi" | tr -d '\n' | sed -n 's/.*"signing_key_fingerprint"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+
+    if [ -z "$fingerprint" ]; then
+        echo -e "\n\tERRO - Não foi possível obter a fingerprint da chave do PPA do GNS3."
+        return 1
+    fi
+
+    curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${fingerprint}" \
+        | gpg --dearmor --yes -o /usr/share/keyrings/gns3-ppa.gpg
+
+    echo "deb [signed-by=/usr/share/keyrings/gns3-ppa.gpg] https://ppa.launchpadcontent.net/gns3/ppa/ubuntu ${ubuntuCodename} main" \
+        > /etc/apt/sources.list.d/gns3-ppa.list
+
+    return 0
+}
+
 # O script inicia sua execução aqui!!!
 
 echo -e "Instalação e configuração do GNS3 e Docker, bem como da configuração das permissões dos usuários criados pelo LDAP.\n"
@@ -59,9 +110,9 @@ echo -e "\n2. Instalando e configurando Docker:"
 echo -e "\t - Instalando. "
 apt install -y apt-transport-https ca-certificates curl gnupg
 
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker.gpg
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor --yes -o /usr/share/keyrings/docker.gpg
 
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
 apt update
 
@@ -83,26 +134,62 @@ echo -e "\t\t* Reiniciando o Docker para aplicar as configurações."
 systemctl restart docker
 
 echo -e "\t - Adicionando repositório PPA do GNS3"
-sudo add-apt-repository -y ppa:gns3/ppa
+addGNS3Repository
+apt update
 
 echo -e "3. Configurando e instalando o GNS3:"
 
 echo -e "\t - Instalando. "
-apt install -y gns3-server gns3-gui gns3-webclient-pack dynamips vpcs ubridge wireshark xfce4-terminal
+
+gns3Packages=(gns3-server gns3-gui dynamips vpcs wireshark xfce4-terminal)
+optionalPackages=(gns3-webclient-pack ubridge)
+
+for package in "${gns3Packages[@]}"; do
+    if ! aptPackageExists "$package"; then
+        echo -e "\n\tERRO - Pacote obrigatório não encontrado nos repositórios: $package"
+        echo -e "\tVerifique se o repositório do GNS3 foi adicionado corretamente."
+        exit 1
+    fi
+done
+
+for package in "${optionalPackages[@]}"; do
+    if aptPackageExists "$package"; then
+        gns3Packages+=("$package")
+    else
+        echo -e "\t\t+ Aviso: pacote opcional '$package' não encontrado neste sistema."
+    fi
+done
+
+apt install -y "${gns3Packages[@]}"
 
 echo -e "\t - Configurando. "
 echo -e "\t\t* Criando diretório /etc/gns3."
-mkdir /etc/gns3
+mkdir -p /etc/gns3
 echo -e "\t\t* gns3_server.conf."
 cp etc/gns3_server.conf /etc/gns3
 cp etc/gns3_controller.conf /etc/gns3
 echo -e "\t\t* Criando usuário gns3."
-adduser --system --group gns3
+if ! id -u gns3 > /dev/null 2>&1; then
+    adduser --system --group gns3
+fi
 usermod -g ldap gns3
 echo -e "\t\t* Adicionando usuário gns3 aos grupos necessários."
+ensureGroup ldap
+ensureGroup docker
+ensureGroup vboxusers
+ensureGroup libvirt-qemu
+ensureGroup ubridge
 usermod -aG ldap,docker,vboxusers,libvirt-qemu,ubridge gns3
-usermod -aG ldap,docker,vboxusers,libvirt-qemu,ubridge suporte
-usermod -aG ldap,docker,vboxusers,libvirt-qemu,ubridge aluno
+if id -u suporte > /dev/null 2>&1; then
+    usermod -aG ldap,docker,vboxusers,libvirt-qemu,ubridge suporte
+else
+    echo -e "\t\t\t+ Usuário 'suporte' não existe, pulando."
+fi
+if id -u aluno > /dev/null 2>&1; then
+    usermod -aG ldap,docker,vboxusers,libvirt-qemu,ubridge aluno
+else
+    echo -e "\t\t\t+ Usuário 'aluno' não existe, pulando."
+fi
 echo -e "\t\t* Alterando dono e permissão do arquivo de configuração do GNS3."
 setfacl -d -m u::rwx,g::rwx,o::rx /var/gns3/
 setfacl -d -m u::rwx,g::rwx,o::rx /var/gns3/projects
@@ -132,7 +219,7 @@ verifyFile $dirImg$file3640
 
 #não sei para que o GNS3 utiliza esse diretório, mas está utilizando
 echo -e "\t\t* criando diretório /nonexistent/."
-mkdir /nonexistent/
+mkdir -p /nonexistent/
 
 echo -e "\t\t* Configurando permissões."
 chown -R gns3:ldap /var/gns3/ /nonexistent/
