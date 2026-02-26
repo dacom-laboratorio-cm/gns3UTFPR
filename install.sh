@@ -227,11 +227,17 @@ chmod -R 775 /var/gns3 /nonexistent/
 
 
 echo -e "\t\t* Alterando nome do executável do GNS3."
-if [ ! -e /usr/bin/gns3-gui ]; then
-    echo -e "\t\t\t+ Arquivo não existia, então foi renomeado!."
-    mv /usr/bin/gns3 /usr/bin/gns3-gui
+if [ -e /usr/bin/gns3.real ]; then
+    echo -e "\t\t\t+ Binário original já preservado em /usr/bin/gns3.real."
 else
-    echo -e "\t\t\t+ Arquivo já existia, então nada foi feito."
+    if [ -e /usr/bin/gns3 ] && grep -q "Não existe o diretório e arquivos de configuração do GNS3" /usr/bin/gns3 2>/dev/null; then
+        echo -e "\t\t\t+ Wrapper já estava em /usr/bin/gns3; não foi possível preservar o binário original automaticamente."
+    elif [ -e /usr/bin/gns3 ]; then
+        echo -e "\t\t\t+ Preservando binário original em /usr/bin/gns3.real."
+        mv /usr/bin/gns3 /usr/bin/gns3.real
+    else
+        echo -e "\t\t\t+ /usr/bin/gns3 não encontrado; mantendo configuração atual."
+    fi
 fi
 
 echo -e "\t\t* Criando novo executável do GNS3 que copia o arquivo de configuração do ambiente gráfico quando for executado pela primeira vez."

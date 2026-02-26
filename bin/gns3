@@ -2,6 +2,28 @@
 
 USER_DIR="$HOME/.config/GNS3/2.2/"
 CONFIG_DIR="/var/gns3/configs/gui/"
+SELF_PATH="$(readlink -f "$0")"
+
+launch_gns3_gui() {
+    if [ -x /usr/bin/gns3.real ]; then
+        exec /usr/bin/gns3.real "$@"
+    fi
+
+    if [ -x /usr/bin/gns3-gui.real ]; then
+        exec /usr/bin/gns3-gui.real "$@"
+    fi
+
+    if [ -x /usr/bin/gns3-gui ]; then
+        local resolved_gui
+        resolved_gui="$(readlink -f /usr/bin/gns3-gui)"
+        if [ "$resolved_gui" != "$SELF_PATH" ]; then
+            exec /usr/bin/gns3-gui "$@"
+        fi
+    fi
+
+    echo "ERRO: não foi possível localizar um executável válido do GNS3 GUI (/usr/bin/gns3.real, /usr/bin/gns3-gui.real ou /usr/bin/gns3-gui)."
+    exit 1
+}
 
 # Cria o diretório de configuração se não existir
 if [ ! -d "$USER_DIR" ]; then
@@ -12,4 +34,4 @@ if [ ! -d "$USER_DIR" ]; then
 fi
 
 # Inicia o GNS3
-/usr/bin/gns3-gui
+launch_gns3_gui "$@"
