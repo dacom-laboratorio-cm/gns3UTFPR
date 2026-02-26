@@ -46,6 +46,7 @@ echo -e "\t - configurando permissões dos diretórios. "
 # não fiz -R pq pode já existir diretório de usuários lá dentro e ai mudaria a permissão 700 esperada!
 chmod 775 /home/usuarios/
 chmod 775 /home/usuarios/pessoas/
+chmod 775 /home/alunos/
 
 echo -e "\t - configurando permissões do diretório home. "
 echo -e "\t\t* common-session - umask 077"
